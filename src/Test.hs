@@ -1,19 +1,21 @@
-import           Text.Parsec hiding ((<|>), between)
-import           Text.Parsec.Combinator hiding (between)
-import           Text.Parsec.Char
-import           Text.Parsec.Prim
-import           Data.Maybe (catMaybes)
+import Text.Parsec hiding ((<|>), between)
+import Text.Parsec.Combinator hiding (between)
+import Text.Parsec.Char
+import Text.Parsec.Prim
+import Data.Maybe (catMaybes)
+import Data.Foldable (foldMap)
 
-import           Control.Applicative hiding ((<|>), many)
+import Control.Applicative hiding ((<|>), many)
+import Data.Monoid
 
 -- parseTest parseTex "abc\\xy%z"
 -- [LaText "abc",LaCommand "xy" [],LaComment "z"]
 
 data LaTeX =
     LaText String
+  | ArrowCommand Arrow
   | LaCommand String [Argument]
   | LaComment String
-  | ArrowCommand Arrow
   deriving (Show)
 
 data Argument = OptArg String
@@ -21,25 +23,27 @@ data Argument = OptArg String
               deriving (Show)
 
 
-type Curving = String
-type Tip     = String
-type Label   = LaTeX
-
 data Arrow = Arrow {
-   arrowCurving  :: Maybe Curving,
-   arrowTip      :: Maybe Tip,
-   arrowLabels   :: [Label] }
+   arrowDirection :: Maybe Direction,
+   arrowCurving   :: Maybe Curving,
+   arrowTip       :: Maybe Tip,
+   arrowLabels    :: [Label] }
    deriving (Show)
+type Direction = String
+type Curving   = String
+type Tip       = String
+type Label     = LaTeX
 
 (<||>) :: Maybe a -> Maybe a -> Maybe a
 (Just x) <||> y = (Just x)
 Nothing  <||> y = y
 
-(<>) :: Arrow -> Arrow -> Arrow
-(Arrow x y z)  <> (Arrow x' y' z') = Arrow (x <||> x') (y <||> y') (z ++ z')
 
-emptyArrow = Arrow Nothing Nothing []
+emptyArrow = Arrow Nothing Nothing Nothing []
 
+instance Monoid Arrow where
+  (Arrow d x y z)  `mappend` (Arrow d' x' y' z') = Arrow (d <||> d') (x <||> x') (y <||> y') (z ++ z')
+  mempty  = emptyArrow
 
 
 
@@ -54,7 +58,8 @@ parseTex :: Parser [LaTeX]
 parseTex = manyTill parseTex' eof
 
 parseTex' :: Parser LaTeX
-parseTex' = do command
+parseTex' = do parseArrow
+           <|> command
            <|> comment
            <|> text
 
@@ -95,16 +100,25 @@ between :: Char -> Char -> Parser String
 between a b = do char a
                  manyTill anyChar (try (char b))
 
-{-
-parseArrow = undefined
+parseArrow :: Parser LaTeX
+parseArrow = do
+            string "\\ar"
+            args <- sequence [optionMaybe parseTip,
+                             optionMaybe parseCurving]
+            opt  <- between '[' ']'
+            spaces
+            mls  <- optionMaybe parseLabels
+            let l = catMaybes (Just (emptyArrow {arrowDirection = Just opt}):mls:args)
+            return (ArrowCommand $  mconcat l)
 
+parseTip :: Parser Arrow
 parseTip = do
     { spaces
     ; char '@'
     ; t <- between '{' '}'
     ; return (emptyArrow { arrowTip = Just t })
     }
-
+parseCurving :: Parser Arrow
 parseCurving = do
     { spaces
     ; char '@'
@@ -113,9 +127,9 @@ parseCurving = do
     }
 
 parseLabels :: Parser Arrow
-parseLabels = fmap (foldr (<>) emptyArrow) $ many parseLabel
+parseLabels = fmap (foldr (<>) emptyArrow) $ (singleton <$> parseLabel)
 
-parseLabel = try parceBracedLabel <|> try parseUnBracedLabel
+parseLabel = try parseBracedLabel  <|> try parseUnBracedLabel
 
 
 parseUnBracedLabel = do
@@ -127,17 +141,25 @@ parseUnBracedLabel = do
 
 parseToken :: Parser LaTeX
 parseToken =  try command
-          <|> try (parseTex <$> manyTill anyChar (try foo))
+          <|> LaText <$> (singleton <$> anyChar)
           where
-            foo = (oneOf "\\" >> return ()) <|> space
+            foo = (oneOf "\\" >> return ()) <|> (space >> return ()) <|> (eol >> return())
+
+
+singleton x = [x]
 
 parseBracedLabel = do
     { spaces
     ; c <- oneOf "_^"
-    ; l <- between '[' ']'
-    ; return (emptyArrow {arrowLabels = [parseTex l]})
+    ; l <- sthBetween parseTex' '{' '}'
+    ; return (emptyArrow {arrowLabels = l})
     }
--}
---foo = "\\ar @{-->} @/_2em/[ul]_{u} abc"
+
+sthBetween :: Parser a -> Char -> Char -> Parser [a]
+sthBetween f a b = do char a
+                      manyTill f (try (char b))
+
+
+foo = "\\ar @{-->} @/_2em/[ul]_{u} abc"
 
 
