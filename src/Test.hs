@@ -18,8 +18,8 @@ data LaTeX =
   | LaComment String
   deriving (Show)
 
-data Argument = OptArg String
-              | ReqArg String
+data Argument = OptArg [LaTeX]
+              | ReqArg [LaTeX]
               deriving (Show)
 
 
@@ -32,7 +32,7 @@ data Arrow = Arrow {
 type Direction = String
 type Curving   = String
 type Tip       = String
-type Label     = LaTeX
+type Label     = (Char, LaTeX)
 
 (<||>) :: Maybe a -> Maybe a -> Maybe a
 (Just x) <||> y = (Just x)
@@ -58,10 +58,10 @@ parseTex :: Parser [LaTeX]
 parseTex = manyTill parseTex' eof
 
 parseTex' :: Parser LaTeX
-parseTex' = do parseArrow
-           <|> command
-           <|> comment
-           <|> text
+parseTex' = do try parseArrow
+           <|> try command
+           <|> try comment
+           <|> try text
 
 text :: Parser LaTeX
 text = LaText <$> manyTill anyChar (try $ lookAhead isSpecial)
@@ -93,12 +93,18 @@ parseArgs = do
                       ; return (catMaybes [oArg, rArg])
                       }
 optArg:: Parser Argument
-optArg = OptArg <$> between '[' ']'
-reqArg = ReqArg <$> between '{' '}'
+optArg = OptArg <$> between' '[' ']'
+reqArg = ReqArg <$> between' '{' '}'
+
+
+between' :: Char -> Char -> Parser [LaTeX]
+between' a b = do char a
+                  manyTill parseTex' (try (char b))
 
 between :: Char -> Char -> Parser String
 between a b = do char a
                  manyTill anyChar (try (char b))
+
 
 parseArrow :: Parser LaTeX
 parseArrow = do
@@ -136,7 +142,7 @@ parseUnBracedLabel = do
     { spaces
     ; c <- oneOf "_^"
     ; l <- parseToken
-    ; return (emptyArrow {arrowLabels = [l]})
+    ; return (emptyArrow {arrowLabels = [(c, l)]})
     }
 
 parseToken :: Parser LaTeX
@@ -151,14 +157,9 @@ singleton x = [x]
 parseBracedLabel = do
     { spaces
     ; c <- oneOf "_^"
-    ; l <- sthBetween parseTex' '{' '}'
-    ; return (emptyArrow {arrowLabels = l})
+    ; l <- between '{' '}'
+    ; return (emptyArrow {arrowLabels = [(c, LaText l)]})
     }
-
-sthBetween :: Parser a -> Char -> Char -> Parser [a]
-sthBetween f a b = do char a
-                      manyTill f (try (char b))
-
 
 foo = "\\ar @{-->} @/_2em/[ul]_{u} abc"
 
