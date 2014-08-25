@@ -6,11 +6,24 @@ import           Data.Maybe (catMaybes)
 
 import           Control.Applicative hiding ((<|>), many)
 
+-- parseTest parseTex "abc\\xy%z"
+-- [LaText "abc",LaCommand "xy" [],LaComment "z"]
+
+data LaTeX =
+    LaText String
+  | LaCommand String [Argument]
+  | LaComment String
+  | ArrowCommand Arrow
+  deriving (Show)
+
+data Argument = OptArg String
+              | ReqArg String
+              deriving (Show)
 
 
 type Curving = String
 type Tip     = String
-type Label   = String
+type Label   = LaTeX
 
 data Arrow = Arrow {
    arrowCurving  :: Maybe Curving,
@@ -30,19 +43,6 @@ emptyArrow = Arrow Nothing Nothing []
 
 
 
-data LaTeX =
-    LaText String
-  | LaCommand String [Argument]
-  | LaComment String
-  | ArrowCommand Arrow
-  deriving (Show)
-
-data Argument = OptArg String
-              | ReqArg String
-              deriving (Show)
-
-
-
 
 --comment = do{ string "%"
 --              ; manyTill anyChar (try (string "-->"))
@@ -50,15 +50,23 @@ data Argument = OptArg String
 
 type Parser = Parsec String ()
 
+parseTex :: Parser [LaTeX]
+parseTex = manyTill parseTex' eof
+
+parseTex' :: Parser LaTeX
+parseTex' = do command
+           <|> comment
+           <|> text
+
 text :: Parser LaTeX
-text = LaText <$> manyTill anyChar (try isSpecial)
+text = LaText <$> manyTill anyChar (try $ lookAhead isSpecial)
 
 isSpecial = (oneOf "\\%" >> return ()) <|> eof
 
 comment :: Parser LaTeX
 comment = LaComment <$> do
                       { string "%"
-                      ; manyTill anyChar (try eol)
+                      ; manyTill anyChar (try $ lookAhead eol)
                       }
 eol = (newline >> return ()) <|> eof
 
@@ -87,6 +95,7 @@ between :: Char -> Char -> Parser String
 between a b = do char a
                  manyTill anyChar (try (char b))
 
+{-
 parseArrow = undefined
 
 parseTip = do
@@ -106,13 +115,29 @@ parseCurving = do
 parseLabels :: Parser Arrow
 parseLabels = fmap (foldr (<>) emptyArrow) $ many parseLabel
 
-parseLabel = do
+parseLabel = try parceBracedLabel <|> try parseUnBracedLabel
+
+
+parseUnBracedLabel = do
     { spaces
     ; c <- oneOf "_^"
-    ; l <- between '[' ']'
+    ; l <- parseToken
     ; return (emptyArrow {arrowLabels = [l]})
     }
 
-foo = "\\ar @{-->} @/_2em/[ul]_{u} abc"
+parseToken :: Parser LaTeX
+parseToken =  try command
+          <|> try (parseTex <$> manyTill anyChar (try foo))
+          where
+            foo = (oneOf "\\" >> return ()) <|> space
+
+parseBracedLabel = do
+    { spaces
+    ; c <- oneOf "_^"
+    ; l <- between '[' ']'
+    ; return (emptyArrow {arrowLabels = [parseTex l]})
+    }
+-}
+--foo = "\\ar @{-->} @/_2em/[ul]_{u} abc"
 
 
