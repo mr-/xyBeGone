@@ -32,7 +32,7 @@ data Arrow = Arrow {
 type Direction = String
 type Curving   = String
 type Tip       = String
-type Label     = (Char, LaTeX)
+type Label     = (Char, [LaTeX])
 
 (<||>) :: Maybe a -> Maybe a -> Maybe a
 (Just x) <||> y = (Just x)
@@ -55,32 +55,41 @@ instance Monoid Arrow where
 type Parser = Parsec String ()
 
 parseTex :: Parser [LaTeX]
-parseTex = manyTill parseTex' eof
+parseTex = concat <$> manyTill parseTex' eof
 
-parseTex' :: Parser LaTeX
+parseTex' :: Parser [LaTeX]
 parseTex' = do try parseArrow
            <|> try command
            <|> try comment
            <|> try text
 
-text :: Parser LaTeX
-text = LaText <$> manyTill anyChar (try $ lookAhead isSpecial)
 
-isSpecial = (oneOf "\\%" >> return ()) <|> eof
+text :: Parser [LaTeX]
+text = do
+          x <- anyChar
+          case x of
+            '{' -> do tex <- concat <$> manyTill parseTex' (try $ lookAhead isSpecial)
+                      return $ (LaText "{") : tex
+            _   -> do ch <- concat <$> manyTill text (try $ lookAhead isSpecial)
+                      return $ [foldr1 foo  (LaText  [x]:ch)]
+        where foo (LaText x) (LaText y) = LaText $ x ++ y
 
-comment :: Parser LaTeX
-comment = LaComment <$> do
-                      { string "%"
-                      ; manyTill anyChar (try $ lookAhead eol)
-                      }
+isSpecial = (oneOf "\\%}" >> return ()) <|> eof
+
+comment :: Parser [LaTeX]
+comment =  do
+             { string "%"
+             ; x <- manyTill anyChar (try $ lookAhead eol)
+             ; return [LaComment x]
+             }
 eol = (newline >> return ()) <|> eof
 
-command :: Parser LaTeX
+command :: Parser [LaTeX]
 command = do
                       { string "\\"
                       ; cmd  <- many1 letter
                       ; args <- parseArgs
-                      ; return $ LaCommand cmd args
+                      ; return $ [LaCommand cmd args]
                       }
 
 parseArgs :: Parser [Argument]
@@ -99,14 +108,14 @@ reqArg = ReqArg <$> between' '{' '}'
 
 between' :: Char -> Char -> Parser [LaTeX]
 between' a b = do char a
-                  manyTill parseTex' (try (char b))
+                  concat <$> manyTill parseTex' (try (char b))
 
 between :: Char -> Char -> Parser String
 between a b = do char a
                  manyTill anyChar (try (char b))
 
 
-parseArrow :: Parser LaTeX
+parseArrow :: Parser [LaTeX]
 parseArrow = do
             string "\\ar"
             args <- sequence [optionMaybe parseTip,
@@ -115,7 +124,7 @@ parseArrow = do
             spaces
             mls  <- optionMaybe parseLabels
             let l = catMaybes (Just (emptyArrow {arrowDirection = Just opt}):mls:args)
-            return (ArrowCommand $  mconcat l)
+            return [ArrowCommand $  mconcat l]
 
 parseTip :: Parser Arrow
 parseTip = do
@@ -124,6 +133,7 @@ parseTip = do
     ; t <- between '{' '}'
     ; return (emptyArrow { arrowTip = Just t })
     }
+
 parseCurving :: Parser Arrow
 parseCurving = do
     { spaces
@@ -145,12 +155,11 @@ parseUnBracedLabel = do
     ; return (emptyArrow {arrowLabels = [(c, l)]})
     }
 
-parseToken :: Parser LaTeX
+parseToken :: Parser [LaTeX]
 parseToken =  try command
-          <|> LaText <$> (singleton <$> anyChar)
+          <|> singleton <$> LaText <$> (singleton <$> anyChar)
           where
             foo = (oneOf "\\" >> return ()) <|> (space >> return ()) <|> (eol >> return())
-
 
 singleton x = [x]
 
@@ -158,8 +167,9 @@ parseBracedLabel = do
     { spaces
     ; c <- oneOf "_^"
     ; l <- between '{' '}'
-    ; return (emptyArrow {arrowLabels = [(c, LaText l)]})
+    ; return (emptyArrow {arrowLabels = [(c, [LaText l])]})
     }
+
 
 foo = "\\ar @{-->} @/_2em/[ul]_{u} abc"
 
