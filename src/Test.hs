@@ -151,7 +151,7 @@ parseLabel = try parseBracedLabel  <|> try parseUnBracedLabel
 parseUnBracedLabel = do
     { spaces
     ; c <- oneOf "_^"
-    ; l <- parseToken
+    ; l <- parseTex'
     ; return (emptyArrow {arrowLabels = [(c, l)]})
     }
 
